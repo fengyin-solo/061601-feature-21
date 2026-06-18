@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useSaveStore } from '../stores/saveStore'
+import type { SaveSlot, CharacterSummary } from '../stores/saveStore'
+import { getRarityLabel } from '../utils/gameUtils'
 
 const emit = defineEmits<{
   (e: 'close'): void
@@ -8,8 +10,13 @@ const emit = defineEmits<{
 
 const saveStore = useSaveStore()
 const mode = ref<'save' | 'load'>('save')
+const expandedSlotId = ref<number | null>(null)
 
 const sortedSaves = computed(() => saveStore.sortedSaves)
+
+function toggleExpand(slotId: number) {
+  expandedSlotId.value = expandedSlotId.value === slotId ? null : slotId
+}
 
 function saveGame(slotId: number) {
   const slotName = prompt('输入存档名称：', `存档 ${slotId}`)
@@ -40,6 +47,30 @@ function formatDate(timestamp: number): string {
     hour: '2-digit',
     minute: '2-digit'
   })
+}
+
+function getAffinityBarWidth(affinity: number): string {
+  return `${Math.max(0, Math.min(100, (affinity / 100) * 100))}%`
+}
+
+function getAffinityBarColor(affinity: number): string {
+  if (affinity >= 80) return '#ec4899'
+  if (affinity >= 60) return '#f472b6'
+  if (affinity >= 40) return '#fb923c'
+  if (affinity >= 20) return '#fbbf24'
+  if (affinity >= 0) return '#94a3b8'
+  return '#64748b'
+}
+
+function formatRaritySummary(slot: SaveSlot): string {
+  const rc = slot.collectionSummary?.rarityCount
+  if (!rc) return ''
+  const parts: string[] = []
+  if (rc.legendary) parts.push(`传说×${rc.legendary}`)
+  if (rc.epic) parts.push(`史诗×${rc.epic}`)
+  if (rc.rare) parts.push(`稀有×${rc.rare}`)
+  if (rc.common) parts.push(`普通×${rc.common}`)
+  return parts.join(' ')
 }
 
 function createNewSave() {
@@ -87,24 +118,90 @@ function createNewSave() {
         </div>
 
         <div class="save-list">
-          <div 
-            v-for="save in sortedSaves" 
+          <div
+            v-for="save in sortedSaves"
             :key="save.id"
             class="save-item"
-            @click="mode === 'save' ? saveGame(save.id) : loadGame(save.id)"
+            :class="{ expanded: expandedSlotId === save.id }"
           >
-            <div class="save-icon">
-              {{ mode === 'save' ? '💾' : '📂' }}
+            <div class="save-main" @click="toggleExpand(save.id)">
+              <div class="save-icon">
+                {{ mode === 'save' ? '💾' : '📂' }}
+              </div>
+              <div class="save-info">
+                <span class="save-name">{{ save.name }}</span>
+                <span class="save-details">{{ save.time }}</span>
+                <div v-if="save.characterSummary?.length" class="save-chips">
+                  <span
+                    v-for="char in save.characterSummary.filter(c => c.unlocked)"
+                    :key="char.id"
+                    class="char-chip"
+                    :style="{ borderColor: getAffinityBarColor(char.affinity) }"
+                  >
+                    {{ char.avatar }} {{ char.stage }}
+                  </span>
+                </div>
+              </div>
+              <div class="save-meta">
+                <span class="save-date">{{ formatDate(save.timestamp) }}</span>
+                <div class="save-meta-actions">
+                  <span class="expand-hint">{{ expandedSlotId === save.id ? '▲' : '▼' }}</span>
+                  <button class="delete-btn" @click="deleteSave(save.id, $event)" title="删除">
+                    🗑️
+                  </button>
+                </div>
+              </div>
             </div>
-            <div class="save-info">
-              <span class="save-name">{{ save.name }}</span>
-              <span class="save-details">{{ save.time }}</span>
-            </div>
-            <div class="save-meta">
-              <span class="save-date">{{ formatDate(save.timestamp) }}</span>
-              <button class="delete-btn" @click="deleteSave(save.id, $event)" title="删除">
-                🗑️
-              </button>
+
+            <div v-if="expandedSlotId === save.id" class="save-detail">
+              <div class="detail-section">
+                <h4 class="detail-title">👥 角色关系</h4>
+                <div class="char-list">
+                  <div
+                    v-for="char in save.characterSummary"
+                    :key="char.id"
+                    class="char-row"
+                  >
+                    <span class="char-avatar">{{ char.avatar }}</span>
+                    <span class="char-name">{{ char.name }}</span>
+                    <div class="affinity-bar-wrap">
+                      <div
+                        class="affinity-bar"
+                        :style="{ width: getAffinityBarWidth(char.affinity), background: getAffinityBarColor(char.affinity) }"
+                      ></div>
+                    </div>
+                    <span class="char-stage" :style="{ color: getAffinityBarColor(char.affinity) }">{{ char.stage }}</span>
+                    <span class="char-affinity">{{ char.affinity }}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div v-if="save.keyEvents?.length" class="detail-section">
+                <h4 class="detail-title">📖 关键事件</h4>
+                <div class="event-tags">
+                  <span v-for="evt in save.keyEvents" :key="evt" class="event-tag">
+                    {{ evt }}
+                  </span>
+                </div>
+              </div>
+
+              <div v-if="save.collectionSummary" class="detail-section">
+                <h4 class="detail-title">🎴 收藏摘要</h4>
+                <div class="collection-info">
+                  <span class="collection-total">共 {{ save.collectionSummary.total }} 张</span>
+                  <span v-if="formatRaritySummary(save)" class="collection-rarity">{{ formatRaritySummary(save) }}</span>
+                  <span v-if="save.collectionSummary.latest" class="collection-latest">最近：{{ save.collectionSummary.latest }}</span>
+                </div>
+              </div>
+
+              <div class="detail-actions">
+                <button v-if="mode === 'load'" class="action-btn load-btn" @click="loadGame(save.id)">
+                  📂 加载此存档
+                </button>
+                <button v-if="mode === 'save'" class="action-btn save-btn" @click="saveGame(save.id)">
+                  💾 覆盖保存
+                </button>
+              </div>
             </div>
           </div>
 
@@ -125,7 +222,7 @@ function createNewSave() {
 <style scoped>
 .save-modal {
   padding: 24px;
-  max-width: 500px;
+  max-width: 560px;
 }
 
 .modal-header {
@@ -240,24 +337,37 @@ function createNewSave() {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  max-height: 400px;
+  max-height: 480px;
   overflow-y: auto;
   padding-right: 8px;
 }
 
 .save-item {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 14px;
   background: var(--bg-tertiary);
   border-radius: var(--radius-md);
-  cursor: pointer;
   transition: all 0.2s;
+  overflow: hidden;
 }
 
 .save-item:hover {
   background: var(--accent-light);
+}
+
+.save-item.expanded {
+  background: var(--bg-tertiary);
+  box-shadow: 0 4px 12px var(--shadow-color);
+}
+
+.save-main {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.save-main:hover {
   transform: translateX(4px);
 }
 
@@ -265,6 +375,7 @@ function createNewSave() {
   font-size: 28px;
   width: 44px;
   text-align: center;
+  flex-shrink: 0;
 }
 
 .save-info {
@@ -285,15 +396,46 @@ function createNewSave() {
   color: var(--text-secondary);
 }
 
+.save-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.char-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 8px;
+  border-radius: 9999px;
+  border: 1.5px solid;
+  font-size: 11px;
+  background: var(--bg-secondary);
+  white-space: nowrap;
+}
+
 .save-meta {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
   gap: 6px;
+  flex-shrink: 0;
 }
 
 .save-date {
   font-size: 11px;
+  color: var(--text-muted);
+}
+
+.save-meta-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.expand-hint {
+  font-size: 10px;
   color: var(--text-muted);
 }
 
@@ -310,6 +452,166 @@ function createNewSave() {
 
 .delete-btn:hover {
   background: #fecaca;
+}
+
+.save-detail {
+  padding: 0 14px 14px;
+  border-top: 1px solid var(--bg-secondary);
+  margin-top: 0;
+  animation: slideDown 0.2s ease;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    max-height: 0;
+  }
+  to {
+    opacity: 1;
+    max-height: 500px;
+  }
+}
+
+.detail-section {
+  margin-top: 12px;
+}
+
+.detail-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+.char-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.char-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.char-avatar {
+  font-size: 18px;
+  width: 24px;
+  text-align: center;
+}
+
+.char-name {
+  width: 48px;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.affinity-bar-wrap {
+  flex: 1;
+  height: 6px;
+  background: var(--bg-secondary);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.affinity-bar {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s;
+}
+
+.char-stage {
+  font-size: 12px;
+  font-weight: 500;
+  width: 36px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.char-affinity {
+  font-size: 11px;
+  color: var(--text-muted);
+  width: 28px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.event-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.event-tag {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 9999px;
+  background: var(--accent-light);
+  color: var(--accent-primary);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.collection-info {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.collection-total {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.collection-rarity {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.collection-latest {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-style: italic;
+}
+
+.detail-actions {
+  margin-top: 14px;
+  display: flex;
+  gap: 8px;
+}
+
+.action-btn {
+  flex: 1;
+  padding: 8px 0;
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  font-weight: 500;
+  text-align: center;
+  transition: all 0.2s;
+}
+
+.load-btn {
+  background: var(--accent-primary);
+  color: white;
+}
+
+.load-btn:hover {
+  filter: brightness(1.1);
+}
+
+.save-btn {
+  background: var(--accent-light);
+  color: var(--accent-primary);
+  border: 1.5px solid var(--accent-primary);
+}
+
+.save-btn:hover {
+  background: var(--accent-primary);
+  color: white;
 }
 
 .empty-saves {

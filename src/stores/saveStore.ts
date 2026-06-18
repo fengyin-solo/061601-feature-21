@@ -1,6 +1,18 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { useGameStore } from './gameStore'
+import gameConfig from '../config/gameConfig'
+import { getAffinityStage, getMoodLabel } from '../utils/gameUtils'
+
+export interface CharacterSummary {
+  id: string
+  name: string
+  avatar: string
+  affinity: number
+  mood: number
+  stage: string
+  unlocked: boolean
+}
 
 export interface SaveSlot {
   id: number
@@ -9,6 +21,9 @@ export interface SaveSlot {
   time: string
   timestamp: number
   data: string
+  characterSummary: CharacterSummary[]
+  keyEvents: string[]
+  collectionSummary: { total: number; rarityCount: Record<string, number>; latest: string }
 }
 
 const STORAGE_KEY = 'love_story_game_saves'
@@ -85,10 +100,45 @@ export const useSaveStore = defineStore('save', () => {
     }
   }
 
+  function buildCharacterSummary(): CharacterSummary[] {
+    return gameStore.characters.map(c => {
+      const config = gameConfig.characters.find(cc => cc.id === c.id)
+      return {
+        id: c.id,
+        name: config?.name || c.id,
+        avatar: config?.avatar || '❓',
+        affinity: c.affinity,
+        mood: c.mood,
+        stage: c.unlocked ? getAffinityStage(c.affinity) : '未解锁',
+        unlocked: c.unlocked
+      }
+    })
+  }
+
+  function buildKeyEvents(): string[] {
+    return gameConfig.events
+      .filter(e => gameStore.triggeredEvents.includes(e.id))
+      .map(e => e.title)
+  }
+
+  function buildCollectionSummary(): SaveSlot['collectionSummary'] {
+    const collected = gameStore.collectedCards
+    const rarityCount: Record<string, number> = {}
+    collected.forEach(cardId => {
+      const card = gameConfig.cards.find(c => c.id === cardId)
+      if (card) {
+        rarityCount[card.rarity] = (rarityCount[card.rarity] || 0) + 1
+      }
+    })
+    const latestCard = collected.length > 0
+      ? gameConfig.cards.find(c => c.id === collected[collected.length - 1])?.name || ''
+      : ''
+    return { total: collected.length, rarityCount, latest: latestCard }
+  }
+
   function saveToSlot(slotId: number, slotName?: string) {
     const existingIndex = saveSlots.value.findIndex(s => s.id === slotId)
     const data = serializeGameState()
-    const charCount = gameStore.unlockedCharacters.length
 
     const slot: SaveSlot = {
       id: slotId,
@@ -96,7 +146,10 @@ export const useSaveStore = defineStore('save', () => {
       day: gameStore.day,
       time: `第${gameStore.day}天 - ${gameStore.timeSlot}`,
       timestamp: Date.now(),
-      data
+      data,
+      characterSummary: buildCharacterSummary(),
+      keyEvents: buildKeyEvents(),
+      collectionSummary: buildCollectionSummary()
     }
 
     if (existingIndex >= 0) {
@@ -136,7 +189,10 @@ export const useSaveStore = defineStore('save', () => {
       data,
       timestamp: Date.now(),
       day: gameStore.day,
-      time: gameStore.timeSlot
+      time: gameStore.timeSlot,
+      characterSummary: buildCharacterSummary(),
+      keyEvents: buildKeyEvents(),
+      collectionSummary: buildCollectionSummary()
     })
   }
 
